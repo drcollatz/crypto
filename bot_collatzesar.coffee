@@ -1,8 +1,9 @@
 ##### Copyright Paules
 ##### Collbot
 
-talib = require 'talib'
+talib = require 'talib' # import technical indicators library (https://cryptotrader.org/talib)
 trading = require "trading"
+
 #params = require "params" #needed for additional parameters
 
 _maximumExchangeFee = .25# params.add "Maximum exchange fee %", .25
