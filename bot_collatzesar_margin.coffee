@@ -3,16 +3,10 @@
 
 mt = require 'margin_trading' # import margin trading module 
 talib = require 'talib'  # import technical indicators library (https://cryptotrader.org/talib)
-#params = require "params" #needed for additional parameters
-
-_maximumExchangeFee = .25# params.add "Maximum exchange fee %", .25
-_maximumOrderAmount = 1 #params.add "Maximum order amount", 1
-_orderTimeout = 30 #params.add "Order timeout", 30
-
 
 class functions
   
-########################################### TA-lib Indicatots ############################################################################################################################ 
+###########################################     TA-lib Indicatots   ########################################### 
 
   @sar: (high, low, lag, accel, accelmax) ->
     results = talib.SAR
@@ -24,27 +18,7 @@ class functions
       optInMaximum: accelmax
     _.last(results) 
 
-#######Extended SAR#########
-#  
-#  @sarext: (high,low,lag,StartValue, OffsetOnReverse, AccelerationInitLong,AccelerationLong,AccelerationMaxLong,AccelerationInitShort, AccelerationShort, AccelerationMaxShort) ->
-#    results = talib.SAREXT
-#      high: high
-#      low: low
-#      startIdx: 0
-#      endIdx: high.length - lag
-#      optInStartValue: StartValue
-#      optInOffsetOnReverse: OffsetOnReverse
-#      optInAccelerationInitLong: AccelerationInitLong
-#      optInAccelerationLong: AccelerationLong
-#      optInAccelerationMaxLong: AccelerationMaxLong
-#      optInAccelerationInitShort: AccelerationInitShort
-#      optInAccelerationShort: AccelerationShort
-#      optInAccelerationMaxShort: AccelerationMaxShort
-#    _.last(results)   
-#
-######################################################################################################################################################################################### 
-
-
+#executed at start
 init: (context, data) ->
 
     context.sarLag  = 1
@@ -54,7 +28,7 @@ init: (context, data) ->
     context.sarCounterDOWN = 0
     @context.invested = false
 
-
+#executed on tick
 handle: (context, data)->
 
     instrument =  data.instruments[0]
@@ -67,19 +41,16 @@ handle: (context, data)->
     context.currentBalance = marginInfo.margin_balance #current margin balance
     context.tradeableBalance = marginInfo.tradable_balance #current tradeable margin balance
     context.currentPrice = instrument.price #current price
+    context.curBotPerformance = ((context.currentBalance / storage.startBalance - 1)*100).toFixed(2)
 
     currentPosition = mt.getPosition instrument
-
-
-    context.curBotPerformance = ((context.currentBalance / storage.startBalance - 1)*100).toFixed(2)
-        
+   
     if currentPosition
         context.currentPosAmount = currentPosition.amount
         context.currentPosPrice = currentPosition.price
-
        
 
-################    logging     ################
+###########################################     Logging     ##############################################
 
     debug "Current BALANCE____: #{context.currentBalance.toFixed(2)} USD"
     debug "Current TR BALANCE_: #{context.tradeableBalance.toFixed(2)} USD"
@@ -88,7 +59,7 @@ handle: (context, data)->
     debug "Bot Gewinn_________: #{context.curBotPerformance}% (Differenz seit letzem Trade: #{(context.curBotPerformance - context.lastBotPerformance).toFixed(2)}%)"
     debug "B&H Gewinn_________: #{((context.currentPrice / storage.startPrice - 1)*100).toFixed(2)}%"     
 
-################    SAR functions   ################
+###########################################     SAR functions   ###########################################
   
     sar = functions.sar(instrument.high, instrument.low, context.sarLag,context.sarAccel, context.sarAccelmax)    
 
@@ -106,7 +77,7 @@ handle: (context, data)->
             "sarUP": sar
              
  
- ################    Trading   ################
+############################################    Trading   ###############################################
     
     if  context.sarCounterDOWN == 1
         if currentPosition
@@ -124,7 +95,7 @@ handle: (context, data)->
             try 
                 price = instrument.price
                 # open long position
-                if mt.buy instrument, 'limit', (marginInfo.tradable_balance / price) * 0.8,price,instrument.interval * 60   #buy(instrument,type,[amount],[price],[timeout]) sell(instrument,type,[amount],[price],[timeout])
+                if mt.buy instrument, 'limit', (marginInfo.tradable_balance / price) * 0.8,price,instrument.interval * 60   #Kaufe mit 80% des tradeable balance, abbruch nach "60(interval bei 1h) x 60 sek"
                     currentPosition = mt.getPosition instrument
                     debug "New position: #{currentPosition.amount}"
                     @context.invested = true
@@ -152,7 +123,7 @@ handle: (context, data)->
             try 
                 price = instrument.price
                 # open short position
-                if mt.sell instrument, 'limit', (marginInfo.tradable_balance / price) * 0.8,price,instrument.interval * 60   #buy(instrument,type,[amount],[price],[timeout]) sell(instrument,type,[amount],[price],[timeout])
+                if mt.sell instrument, 'limit', (marginInfo.tradable_balance / price) * 0.8,price,instrument.interval * 60 
                     currentPosition = mt.getPosition instrument
                     debug "New position: #{currentPosition.amount}"
                     @context.invested = true
@@ -165,6 +136,8 @@ handle: (context, data)->
                     throw e # it is important to rethrow an unhandled exception
 
     debug " "
+
+############################################    ENDE   ###############################################
 
 onStop: ->
     debug "######## BOT ENDE ########"
