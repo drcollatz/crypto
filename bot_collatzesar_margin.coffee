@@ -8,11 +8,11 @@ class functions
   
 ###########################################     TA-lib Indicatots   ########################################### 
 
-  @sar: (high, low, lag, accel, accelmax) ->
+  @sar: (high, low, lag, accel, accelmax, start) ->
     results = talib.SAR
       high: high
       low: low
-      startIdx: 0
+      startIdx: start
       endIdx: high.length - lag
       optInAcceleration: accel
       optInMaximum: accelmax
@@ -24,6 +24,7 @@ init: (context, data) ->
     context.sarLag  = 1
     context.sarAccel = 0.005
     context.sarAccelmax = 0.2
+    context.sarStart = 0    
     context.sarCounterUP = 0
     context.sarCounterDOWN = 0
     @context.invested = false
@@ -61,7 +62,7 @@ handle: (context, data)->
 
 ###########################################     SAR functions   ###########################################
   
-    sar = functions.sar(instrument.high, instrument.low, context.sarLag,context.sarAccel, context.sarAccelmax)    
+    sar = functions.sar(instrument.high, instrument.low, context.sarLag,context.sarAccel, context.sarAccelmax, context.sarStart)    
 
     if (instrument.price >= sar)
         debug "SAR war #{++context.sarCounterDOWN}x UNTEN"
@@ -78,8 +79,10 @@ handle: (context, data)->
              
  
 ############################################    Trading   ###############################################
+
+    ########    CLOSING     ########     
     
-    if  context.sarCounterDOWN == 1
+    if  context.sarCounterDOWN == 1 || context.sarCounterUP == 1
         if currentPosition
             debug "Closing position"
             context.lastBotPerformance = ((context.currentBalance / storage.startBalance - 1)*100).toFixed(2)
@@ -89,6 +92,8 @@ handle: (context, data)->
             context.currentBalance = marginInfo.margin_balance #current margin balance
             context.tradeableBalance = marginInfo.tradable_balance #current tradeable margin balance
             context.currentPrice = instrument.price #current price
+
+    ########    LONG     ######## 
 
     if  context.sarCounterDOWN == 1
         unless @context.invested
@@ -100,6 +105,7 @@ handle: (context, data)->
                     debug "New position: #{currentPosition.amount}"
                     @context.invested = true
                     amount = Math.abs(currentPosition.amount) 
+                    context.sarAccel = 0.005
             catch e 
                 # the exception will be thrown if funds are not enough
                 if /insufficient funds/.exec e
@@ -107,16 +113,7 @@ handle: (context, data)->
                 else
                     throw e # it is important to rethrow an unhandled exception
 
-    if context.sarCounterUP == 1
-        if currentPosition
-            debug "Closing position"
-            context.lastBotPerformance = ((context.currentBalance / storage.startBalance - 1)*100).toFixed(2)
-            mt.closePosition instrument 
-            @context.invested = false
-            marginInfo = mt.getMarginInfo instrument
-            context.currentBalance = marginInfo.margin_balance #current margin balance
-            context.tradeableBalance = marginInfo.tradable_balance #current tradeable margin balance
-            context.currentPrice = instrument.price #current price
+    ########    SHORT     ######## 
 
     if context.sarCounterUP == 1
         unless @context.invested
@@ -127,7 +124,8 @@ handle: (context, data)->
                     currentPosition = mt.getPosition instrument
                     debug "New position: #{currentPosition.amount}"
                     @context.invested = true
-                    amount = Math.abs(currentPosition.amount) 
+                    amount = Math.abs(currentPosition.amount)
+                    context.sarAccel = 0.005
             catch e 
                 # the exception will be thrown if funds are not enough
                 if /insufficient funds/.exec e
