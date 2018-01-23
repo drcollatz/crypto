@@ -20,13 +20,17 @@ class functions
 
 #executed at start
 init: (context, data) ->
-
+    
+    context.verbose = false
     context.sarLag  = 1
     context.sarAccel = 0.005
     context.sarAccelmax = 0.2
     context.sarStart = 0    
     context.sarCounterUP = 0
     context.sarCounterDOWN = 0
+    context.marginFactor = 0.8
+    context.curPositionOnLastTrade
+    context.curPostiionBalance
     @context.invested = false
 
 #executed on tick
@@ -34,49 +38,67 @@ handle: (context, data)->
 
     instrument =  data.instruments[0]
     marginInfo = mt.getMarginInfo instrument
+    currentPosition = mt.getPosition instrument
 
     storage.coin ?= data.instruments[0].pair.substring(0, 3).toUpperCase()
-    storage.startBalance ?= marginInfo.margin_balance    #inital margin balance
-    storage.startPrice ?= instrument.price #inital price
+    storage.startBalance ?= marginInfo.margin_balance  #initial margin balance
+    storage.startPrice ?= instrument.price #initial price
     
     context.currentBalance = marginInfo.margin_balance #current margin balance
     context.tradeableBalance = marginInfo.tradable_balance #current tradeable margin balance
     context.currentPrice = instrument.price #current price
-    context.curBotPerformance = ((context.currentBalance / storage.startBalance - 1)*100).toFixed(2)
 
-    currentPosition = mt.getPosition instrument
-   
+    context.curBotPerformanceOnBalance = ((context.currentBalance / storage.startBalance - 1)*100)
+
     if currentPosition
-        context.currentPosAmount = currentPosition.amount
-        context.currentPosPrice = currentPosition.price
-       
+        context.curPosAmount = currentPosition.amount
+        context.curPosPrice = currentPosition.price
+        context.curPosStartBalance = currentPosition.amount * currentPosition.price
+        context.curPosBalance = currentPosition.amount * context.currentPrice
+        context.curPosProfit = (context.curPosBalance - context.curPosStartBalance)
+        context.curSumBalance = context.currentBalance + context.curPosProfit
+        context.curPLProc = ((context.curSumBalance / storage.startBalance - 1)*100)
+        if context.verbose
+            debug "POS AMOUNT__________: #{currentPosition.amount} #{storage.coin}"
+            debug "POS BUY PRICE_______: #{currentPosition.price.toFixed(2)} USD"
+            debug "POS BALANCE_________: #{context.curPosBalance.toFixed(2)} USD"
+            debug "START BALANCE_______: #{context.curPosStartBalance.toFixed(2)} USD"
+            debug "BOT PROFIT ON TRADE_: #{context.curPosProfit.toFixed(2)} USD"        
+            debug "BOT PROFIT IN SUM___: #{context.curSumBalance.toFixed(2)} USD"
+            
+        info "BOT Gewinn_________: #{context.curPLProc.toFixed(2)} %"
+    
+
 
 ###########################################     Logging     ##############################################
 
-    debug "Current BALANCE____: #{context.currentBalance.toFixed(2)} USD"
-    debug "Current TR BALANCE_: #{context.tradeableBalance.toFixed(2)} USD"
-    debug "Current PRICE______: #{context.currentPrice.toFixed(2)} USD"    
+    if context.verbose
+        info "Current BALANCE____: #{context.currentBalance.toFixed(2)} USD"
+        info "Current TR BALANCE_: #{context.tradeableBalance.toFixed(2)} USD"
+        info "Current PRICE______: #{context.currentPrice.toFixed(2)} USD"    
     
-    debug "Bot Gewinn_________: #{context.curBotPerformance}% (Differenz seit letzem Trade: #{(context.curBotPerformance - context.lastBotPerformance).toFixed(2)}%)"
-    debug "B&H Gewinn_________: #{((context.currentPrice / storage.startPrice - 1)*100).toFixed(2)}%"     
+        warn "Bot Gewinn_________: #{context.curBotPerformanceOnBalance.toFixed(2)}% (Differenz seit letzem Trade: #{(context.curBotPerformanceOnBalance - context.lastBotPerformance).toFixed(2)}%)"
+    warn "B&H Gewinn_________: #{((context.currentPrice / storage.startPrice - 1)*100).toFixed(2)} %"     
 
 ###########################################     SAR functions   ###########################################
   
     sar = functions.sar(instrument.high, instrument.low, context.sarLag,context.sarAccel, context.sarAccelmax, context.sarStart)    
 
     if (instrument.price >= sar)
-        debug "SAR war #{++context.sarCounterDOWN}x UNTEN"
         context.sarCounterUP = 0
+        context.sarCounterDOWN++
         plotMark
             "sarDOWN": sar
-
+        if context.verbose
+            debug "SAR war #{context.sarCounterDOWN}x UNTEN"
         
     if (instrument.price < sar)
-        debug "SAR war #{++context.sarCounterUP}x OBEN"
         context.sarCounterDOWN = 0
+        context.sarCounterUP++
         plotMark
             "sarUP": sar
-             
+        if context.verbose
+            debug "SAR war #{context.sarCounterUP}x OBEN"             
  
 ############################################    Trading   ###############################################
 
@@ -92,6 +114,7 @@ handle: (context, data)->
             context.currentBalance = marginInfo.margin_balance #current margin balance
             context.tradeableBalance = marginInfo.tradable_balance #current tradeable margin balance
             context.currentPrice = instrument.price #current price
+            sendSMS "Position closed"
 
     ########    LONG     ######## 
 
@@ -100,12 +123,13 @@ handle: (context, data)->
             try 
                 price = instrument.price
                 # open long position
-                if mt.buy instrument, 'limit', (marginInfo.tradable_balance / price) * 0.8,price,instrument.interval * 60   #Kaufe mit 80% des tradeable balance, abbruch nach "60(interval bei 1h) x 60 sek"
+                if mt.buy instrument, 'limit', (marginInfo.tradable_balance / price) * context.marginFactor,price,instrument.interval * 60   #Kaufe mit 80% des tradeable balance, abbruch nach "60(interval bei 1h) x 60 sek"
                     currentPosition = mt.getPosition instrument
-                    debug "New position: #{currentPosition.amount}"
                     @context.invested = true
-                    amount = Math.abs(currentPosition.amount) 
-                    context.sarAccel = 0.005
+                    amount = Math.abs(currentPosition.amount)
+                    context.curPositionOnLastTrade = currentPosition.amount * context.currentPrice 
+#                    context.sarAccel = 0.005
+                    sendEmail "New long position"
             catch e 
                 # the exception will be thrown if funds are not enough
                 if /insufficient funds/.exec e
@@ -120,12 +144,13 @@ handle: (context, data)->
             try 
                 price = instrument.price
                 # open short position
-                if mt.sell instrument, 'limit', (marginInfo.tradable_balance / price) * 0.8,price,instrument.interval * 60 
+                if mt.sell instrument, 'limit', (marginInfo.tradable_balance / price) * context.marginFactor,price,instrument.interval * 60 
                     currentPosition = mt.getPosition instrument
-                    debug "New position: #{currentPosition.amount}"
                     @context.invested = true
                     amount = Math.abs(currentPosition.amount)
-                    context.sarAccel = 0.005
+                    context.curPositionOnLastTrade = currentPosition.amount * context.currentPrice
+ #                   context.sarAccel = 0.005
+                    sendEmail "New short position"
             catch e 
                 # the exception will be thrown if funds are not enough
                 if /insufficient funds/.exec e
@@ -133,7 +158,8 @@ handle: (context, data)->
                 else
                     throw e # it is important to rethrow an unhandled exception
 
-    debug " "
+    if context.verbose
+        debug " "
 
 ############################################    ENDE   ###############################################
 
@@ -145,6 +171,10 @@ onStop: ->
     if pos
         debug "Closing position"
         mt.closePosition instrument
+    
+    marginInfo = mt.getMarginInfo instrument
+    context.currentBalance = marginInfo.margin_balance #current margin balance
+    context.currentPrice = instrument.price #current price
 
     debug "Start balance was__: #{storage.startBalance} USD"
     debug "End balance is_____: #{context.currentBalance} USD"
