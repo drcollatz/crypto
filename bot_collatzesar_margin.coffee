@@ -1,6 +1,16 @@
 ##### Copyright Paules
 ##### Collbot
 
+###### ToDos ######
+
+# - bei 'live' Bots verbose automatisch aktivieren
+# - beim start checken ob bereits eine Position offen ist und evtl. invested=true setzen
+# - Programmablauf / logging etc neu sortieren
+
+# Idee: Ultra Fast Bot 1Min-5Min Ticks... Pro Tag nur wenige aber dafür super safe trades "1% und gut" (bei margin sogar nur 0.4% nötig) -> 30% im Monat.
+
+###################
+
 mt = require 'margin_trading' # import margin trading module 
 talib = require 'talib'  # import technical indicators library (https://cryptotrader.org/talib)
 
