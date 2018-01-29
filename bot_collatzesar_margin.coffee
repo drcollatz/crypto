@@ -58,17 +58,16 @@ init: ->
         close:
             color: 'black'
             secondary: true
-            size: 5
+            size: 10
         exit:
             color: 'red'
             secondary: true
-            size: 5
+            size: 10
         performance:
             color: 'green'
             secondary: true
             size: 5
             
-
 #### Tick execution
 handle: ->
 
@@ -87,8 +86,6 @@ handle: ->
 ##### Logging
 
     if context.verbose
-        debug "Status: #{context.positionStatus}"
-        debug "Invested: #{context.invested}"
         debug "------ MARGIN ------"
         debug "CURRENT BALANCE_: #{currentBalance.toFixed(2)} USD"
         debug "START BALANCE___: #{storage.startBalance.toFixed(2)} USD"
@@ -98,7 +95,6 @@ handle: ->
     debug "B&H PROFIT______: #{((currentPrice / storage.startPrice - 1) *  100).toFixed(2)}%"  
 
 ##### Postition
-
 
     currentPosition = mt.getPosition instrument
     if currentPosition
@@ -124,7 +120,7 @@ handle: ->
             debug "START BALANCE_____: #{curPosBalanceAtStart.toFixed(2)} USD"
             debug "PROFIT POSITION___: #{curPosProfit.toFixed(2)} USD (#{curPosProfitPercent.toFixed(2)}%)"
             debug "PROFIT TOTAL______: #{curBalanceTotal.toFixed(2)} USD (#{curProfitPercentTotal.toFixed(2)}%)"
-            debug "Current Margin Balance: #{@functions.OpenPositionCurrentBalance(instrument.price, storage.startBalance, currentPosition)}"
+            debug "Current Margin Balance: #{@functions.OpenPositionCurrentBalance(instrument.price, storage.startBalance, currentPosition).toFixed(2)}"
 
         if curPosProfitPercent < -5
             closePosition = true
@@ -141,18 +137,18 @@ handle: ->
     sarLong = functions.sar(instrument.high, instrument.low, 1,context.sarAccel, context.sarAccelmax) 
     sarShort = functions.sar(instrument.high, instrument.low, 1,context.sarAccelShort, context.sarAccelmaxShort)
 
+    plotMark
+        "sarShort": sarShort
+        "sarLong": sarLong
+
     switch context.positionStatus
         when "start"
             if (sarLong < instrument.price) #long
                 context.positionStatus = "long"
-                plotMark
-                    "sarDOWN": sarLong
                 break
         when "long"
             if (sarLong < instrument.price) #long
                 context.positionStatus = "long"
-                plotMark
-                    "sarDOWN": sarLong
                 break
             if (sarLong > instrument.price) #short
                 context.positionStatus = "short"
@@ -164,14 +160,10 @@ handle: ->
                 context.positionStatus = "wait"
                 break
             if (sarShort > instrument.price) #short
-                plotMark
-                    "sarUP": sarShort   
                 break
         when "wait"
             if (sarLong < instrument.price) #long
                 context.positionStatus = "long"
-                plotMark
-                    "sarDOWN": sarLong
 
 #### Trading
 
@@ -199,10 +191,9 @@ handle: ->
         unless context.invested
             try 
                 # open long position
-                if mt.buy instrument, 'market', (marginInfo.tradable_balance / currentPrice) * context.marginFactor,currentPrice,instrument.interval * 60   #Kaufe mit 80% des tradeable balance, abbruch nach "60(interval bei 1h) x 60 sek"
-                    info "Fee: #{((((marginInfo.tradable_balance / currentPrice) * context.marginFactor ) * currentPrice) * 0.002).toFixed(2)}"
-                    context.invested = true
-                    sendEmail "New long position"
+                mt.buy instrument, 'market', (marginInfo.tradable_balance / currentPrice) * context.marginFactor,currentPrice,instrument.interval * 60   #Kaufe mit 80% des tradeable balance, abbruch nach "60(interval bei 1h) x 60 sek"
+                info "Fee: #{((((marginInfo.tradable_balance / currentPrice) * context.marginFactor ) * currentPrice) * 0.002).toFixed(2)}"
+                context.invested = true
             catch e 
                 # the exception will be thrown if funds are not enough
                 if /insufficient funds/.exec e
@@ -216,10 +207,9 @@ handle: ->
         unless context.invested
             try 
                 # open short position
-                debug "versuche zu verkaufen..."
-                if mt.sell instrument, 'market', (marginInfo.tradable_balance / currentPrice) * context.marginFactor,currentPrice,instrument.interval * 60 
-                    context.invested = true
-                    sendEmail "New short position"
+                mt.sell instrument, 'market', (marginInfo.tradable_balance / currentPrice) * context.marginFactor,currentPrice,instrument.interval * 60 
+                context.invested = true
+                sendEmail "New short position"
             catch e 
                 # the exception will be thrown if funds are not enough
                 if /insufficient funds/.exec e
@@ -258,4 +248,5 @@ onStop: ->
     else
         warn "B&H Gewinn_________: #{buhProfit.toFixed(2)}%" 
 #   debug "Bot started at #{new Date(storage.botStartedAt)}"
-#   debug "Bot stopped at #{new Date(data.at)}"       
+#   debug "Bot stopped at #{new Date(data.at)}"
+  
