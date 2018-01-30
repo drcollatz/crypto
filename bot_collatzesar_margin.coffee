@@ -60,13 +60,19 @@ init: ->
             secondary: true
             size: 10
         exit:
-            color: 'red'
+            color: 'yellow'
             secondary: true
             size: 10
         performance:
-            color: 'green'
+            color: 'blue'
             secondary: true
             size: 5
+        sarLong:
+            color: 'green'
+            size: 3
+        sarShort:
+            color: 'red'
+            size: 3
             
 #### Tick execution
 handle: ->
@@ -138,8 +144,8 @@ handle: ->
     sarShort = functions.sar(instrument.high, instrument.low, 1,context.sarAccelShort, context.sarAccelmaxShort)
 
     plotMark
-        "sarShort": sarShort
-        "sarLong": sarLong
+        sarShort: sarShort
+        sarLong: sarLong
 
     switch context.positionStatus
         when "start"
