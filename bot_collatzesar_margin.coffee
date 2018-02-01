@@ -44,14 +44,13 @@ class functions
 init: ->
     
     context.verbose = true
+    context.live = true
     context.sarAccel = 0.005
     context.sarAccelmax = 0.5
     context.sarAccelShort = 0.01
     context.sarAccelmaxShort = 0.1
-    context.sarCounterUP = 0
-    context.sarCounterDOWN = 0
     context.marginFactor = 0.8
-    context.invested = false # ToDo: dynamisch ermitteln!
+    context.invested = false 
     context.positionStatus = "start"
 
     setPlotOptions
@@ -59,7 +58,7 @@ init: ->
             color: 'black'
             secondary: true
             size: 10
-        exit:
+        stop:
             color: 'yellow'
             secondary: true
             size: 10
@@ -69,10 +68,10 @@ init: ->
             size: 5
         sarLong:
             color: 'green'
-            size: 3
+            size: 5
         sarShort:
             color: 'red'
-            size: 3
+            size: 5
             
 #### Tick execution
 handle: ->
@@ -104,6 +103,7 @@ handle: ->
 
     currentPosition = mt.getPosition instrument
     if currentPosition
+        context.invested = true
         curPosAmount = currentPosition.amount
         curPosPrice = currentPosition.price
         curPosBalanceAtStart = curPosAmount * curPosPrice
@@ -136,7 +136,7 @@ handle: ->
                 context.positionStatus = "long"                
             warn "EMERGENCY EXIT!"
             plotMark
-                exit: 0
+                stop: 0
 
 ##### state machine
   
@@ -153,19 +153,14 @@ handle: ->
                 context.positionStatus = "long"
                 break
         when "long"
-            if (sarLong < instrument.price) #long
-                context.positionStatus = "long"
-                break
             if (sarLong > instrument.price) #short
                 context.positionStatus = "short"
                 closePosition = true
                 break
         when "short" 
             if (sarShort < instrument.price) #long
-                closePosition = true
                 context.positionStatus = "wait"
-                break
-            if (sarShort > instrument.price) #short
+                closePosition = true
                 break
         when "wait"
             if (sarLong < instrument.price) #long
@@ -181,6 +176,7 @@ handle: ->
             mt.closePosition instrument
             marginInfo = mt.getMarginInfo instrument #update margin info after close
             context.invested = false
+            debug "Invested: #{context.invested}"
             closePosition = false
             if curPosProfit >= 0
                 info "Juhuu, du hast eben #{curPosProfit.toFixed(2)} USD (#{curPosProfitPercent.toFixed(2)}%) verdient!"
@@ -226,14 +222,17 @@ handle: ->
     if context.verbose
         debug "######################################################## "
 
+
+onRestart: ->
+    warn "RESTART DETECTED!!!"
+
 #### ENDE
 
 onStop: ->
     debug "######## BOT ENDE ########"
     
     instrument = @data.instruments[0]
-    
-    if currentPosition = mt.getPosition instrument
+    if (currentPosition = mt.getPosition instrument) && context.live == false
         debug "Closing position"
         mt.closePosition instrument
     
@@ -255,4 +254,3 @@ onStop: ->
         warn "B&H Gewinn_________: #{buhProfit.toFixed(2)}%" 
 #   debug "Bot started at #{new Date(storage.botStartedAt)}"
 #   debug "Bot stopped at #{new Date(data.at)}"
-  
