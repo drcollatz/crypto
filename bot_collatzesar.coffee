@@ -1,61 +1,53 @@
-##### Copyright Paules
-##### Collbot
+#### Copyright Paules
+#### Collbot
 
-talib = require 'talib' # import technical indicators library (https://cryptotrader.org/talib)
-trading = require "trading"
+#### ToDos
 
-#params = require "params" #needed for additional parameters
+# - bei 'live' Bots verbose automatisch aktivieren
+# - beim start checken ob bereits eine Position offen ist und evtl. invested=true setzen
+# - Programmablauf / logging etc neu sortieren
+# - First Position Strategie? Warten bis zum nächsten Wechsel, oder direkt loslegen?
+# - Fees berechnen (0.2 % von komplettem Kauf- oder Verkaufswert)
 
-_maximumExchangeFee = .25# params.add "Maximum exchange fee %", .25
+# Idee: Ultra Fast Bot 1Min-5Min Ticks... Pro Tag nur wenige aber dafür super safe trades "1% und gut" (bei margin sogar nur 0.4% nötig) -> 30% im Monat.
+
+#### START
+
+trading = require 'trading' # import core trading module
+talib = require 'talib'  # import technical indicators library (https://cryptotrader.org/talib)
+
+_maximumExchangeFee = .20# params.add "Maximum exchange fee %", .25
 _maximumOrderAmount = 1 #params.add "Maximum order amount", 1
 _orderTimeout = 30 #params.add "Order timeout", 30
 
-
 class functions
-  
-########################################### TA-lib Indicatots ############################################################################################################################ 
+
+#### TA-lib Indicatots 
 
   @sar: (high, low, lag, accel, accelmax) ->
     results = talib.SAR
       high: high
       low: low
-      startIdx: 0.2
+      startIdx: 0
       endIdx: high.length - lag
       optInAcceleration: accel
       optInMaximum: accelmax
     _.last(results) 
 
-#######Extended SAR#########
-#  
-#  @sarext: (high,low,lag,StartValue, OffsetOnReverse, AccelerationInitLong,AccelerationLong,AccelerationMaxLong,AccelerationInitShort, AccelerationShort, AccelerationMaxShort) ->
-#    results = talib.SAREXT
-#      high: high
-#      low: low
-#      startIdx: 0
-#      endIdx: high.length - lag
-#      optInStartValue: StartValue
-#      optInOffsetOnReverse: OffsetOnReverse
-#      optInAccelerationInitLong: AccelerationInitLong
-#      optInAccelerationLong: AccelerationLong
-#      optInAccelerationMaxLong: AccelerationMaxLong
-#      optInAccelerationInitShort: AccelerationInitShort
-#      optInAccelerationShort: AccelerationShort
-#      optInAccelerationMaxShort: AccelerationMaxShort
-#    _.last(results)   
-#
-######################################################################################################################################################################################### 
+#### Init
+init: ->
+    
+    context.verbose = true
+    context.live = true
+    context.sarAccel = 0.005
+    context.sarAccelmax = 0.5
+    context.sarAccelShort = 0.01
+    context.sarAccelmaxShort = 0.1
+    context.positionStatus = "start"
+    context.buyPrice
 
-
-init: (context, data) ->
-
-    context.sarLag  = 1
-    context.sarAccel = 0.02
-    context.sarAccelmax = 0.2
-    context.sarCounterUP = 1
-    context.sarCounterDOWN = 1
-
-
-handle: (context, data)->
+#### Tick execution
+handle: ->
 
     instrument =  data.instruments[0]
     
@@ -72,54 +64,78 @@ handle: (context, data)->
     context.currentPrice = instrument.price
     storage.startPrice ?= instrument.price #inital price
 
-
     maximumBuyAmount = (currencyAvailable/instrument.price) * (1 - (_maximumExchangeFee/100))
     maximumSellAmount = (assetsAvailable * (1 - (_maximumExchangeFee/100)))
-    
-################    logging     ################
 
-    debug "Balance ASSETS____: #{assetsAvailable} #{storage.coin}"
-    debug "Balance CURRENCY__: #{currencyAvailable} USD"
-    debug "Current PRICE_____: #{instrument.price} USD"    
+    diff = ((instrument.price / context.buyPrice - 1)*100) 
+
+
+    
+##### Logging
+
+    if context.verbose
+        debug "Status____________: #{context.positionStatus}"
+        debug "Balance ASSETS____: #{assetsAvailable} #{storage.coin}"
+        debug "Balance CURRENCY__: #{currencyAvailable} USD"
+        debug "Current PRICE_____: #{instrument.price} USD"   
+        debug "Current DIFF______: #{diff.toFixed(2)}%"
     
     debug "Bot Gewinn________: #{(((context.currencyAvailable + (context.assetsAvailable * context.currentPrice)) / storage.startCurrency - 1)*100).toFixed(2)}%"
-    debug "B&H Gewinn________: #{((context.currentPrice / storage.startPrice - 1)*100).toFixed(2)}%"     
+    debug "B&H Gewinn________: #{((context.currentPrice / storage.startPrice - 1)*100).toFixed(2)}%"   
 
-################    SAR functions   ################
-  
-    sar = functions.sar(instrument.high, instrument.low, context.sarLag,context.sarAccel, context.sarAccelmax)    
+    sarLong = functions.sar(instrument.high, instrument.low, 1,context.sarAccel, context.sarAccelmax) 
 
-    if (instrument.price >= sar)
-        debug "SAR war #{context.sarCounterDOWN++}x UNTEN"
-        context.sarCounterUP = 1
+
+    if (diff < -10) ||( diff > 5) && (@portfolio.positions[instrument.asset()].amount > 0) 
+        context.positionStatus = "close"
+        warn "EMERGENCY EXIT!"
         plotMark
-            "sarDOWN": sar
+            "stop": 0
 
-        
-    if (instrument.price < sar)
-        debug "SAR war #{context.sarCounterUP++}x OBEN"
-        context.sarCounterDOWN = 1
-        plotMark
-            "sarUP": sar
-             
- 
- ################    Trading   ################
-       
-    if  context.sarCounterDOWN == 2
-        trading.buy instrument, 'limit', Math.min(_maximumOrderAmount, maximumBuyAmount), instrument.price, _orderTimeout
+    plot
+        "sarLong": sarLong
 
-    if context.sarCounterUP == 2
-        trading.sell instrument, 'limit', Math.min(_maximumOrderAmount, maximumSellAmount), instrument.price, _orderTimeout
+    switch context.positionStatus
+        when "start"
+            if (sarLong < instrument.price) #long
+                context.positionStatus = "long"            
+                warn "LONG"
+                break
+        when "long"
+            if (sarLong > instrument.price) && (context.buyPrice < instrument.price) #close long
+                context.positionStatus = "close"
+                break
+
+#### Trading
+
+    debug "AMOUNT: #{@portfolio.positions[instrument.asset()].amount}"
+
+######## LONG 
+
+    if  context.positionStatus == "long" && (@portfolio.positions[instrument.base()].amount > 0)
+        # open long position
+        info "KAUFEN"            
+        trading.buy instrument
+        context.buyPrice = instrument.price
+
+######## CLOSE
+
+    if context.positionStatus == "close" 
+        # close long position
+        context.positionStatus = "start"   
+        if (@portfolio.positions[instrument.asset()].amount > 0) 
+            warn "VERKAUFEN"
+            trading.sell instrument
 
 
-################    plotting    ################    
+    if context.verbose
+        debug "######################################################## "
 
-
-
-
-    debug " "
+onRestart: ->
+    warn "RESTART DETECTED!!!"
 
 onStop: ->
+   
     debug "######## BOT ENDE ########"
     debug "Start currency was__: #{storage.startCurrency} USD"
     debug "End currency is_____: #{context.currencyAvailable} USD"
@@ -127,6 +143,3 @@ onStop: ->
     debug "End asset is________: #{context.assetsAvailable} #{storage.coin}"
     debug "Bot Gewinn__________: #{(((context.currencyAvailable + (context.assetsAvailable * context.currentPrice)) / storage.startCurrency - 1)*100).toFixed(2)}%"
     debug "B&H Gewinn__________: #{((context.currentPrice / storage.startPrice - 1)*100).toFixed(2)}%" 
-#    debug "Bot started at #{new Date(storage.botStartedAt)}"
-#    debug "Bot stopped at #{new Date(data.at)}"
- 
