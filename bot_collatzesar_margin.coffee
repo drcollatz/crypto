@@ -52,6 +52,7 @@ init: ->
     context.marginFactor = 0.8
     context.invested = false 
     context.positionStatus = "start"
+    context.priceRef = 0
 
     setPlotOptions
         close:
@@ -87,11 +88,23 @@ handle: ->
     storage.startBalance ?= marginInfo.margin_balance  #initial margin balance
 
     lastTotalProfitPercent = (currentBalance / storage.startBalance - 1) * 100 #Profit vor aktuellem Trade
+    
+    if context.stopOrder
+        debug "Stop Order Id: #{context.stopOrder.id}"
+        if context.stopOrder.filled
+            context.wait = true
+            context.invested = false
+            
+            debug "FILLED"
+    else
+        debug "Kein STOP ORDER aktiv" 
 
 ##### Logging
 
     if context.verbose
         debug "------ MARGIN ------"
+        debug "STATUS__________: #{context.positionStatus}"
+        debug "INVESTED________: #{context.invested}"
         debug "CURRENT BALANCE_: #{currentBalance.toFixed(2)} USD"
         debug "START BALANCE___: #{storage.startBalance.toFixed(2)} USD"
         debug "CURRENT PRICE___: #{currentPrice.toFixed(2)} USD"    
@@ -128,16 +141,6 @@ handle: ->
             debug "PROFIT TOTAL______: #{curBalanceTotal.toFixed(2)} USD (#{curProfitPercentTotal.toFixed(2)}%)"
             debug "Current Margin Balance: #{@functions.OpenPositionCurrentBalance(instrument.price, storage.startBalance, currentPosition).toFixed(2)}"
 
-        if curPosProfitPercent < -5
-            closePosition = true
-            if context.positionStatus == "long"
-                context.positionStatus = "short"
-            else
-                context.positionStatus = "long"                
-            warn "EMERGENCY EXIT!"
-            plotMark
-                stop: 0
-
 ##### state machine
   
     sarLong = functions.sar(instrument.high, instrument.low, 1,context.sarAccel, context.sarAccelmax) 
@@ -153,11 +156,34 @@ handle: ->
                 context.positionStatus = "long"
                 break
         when "long"
+            if instrument.price > context.priceRef && currentPosition && instrument.price > curPosPrice
+                mt.cancelOrder(context.stopOrder)
+                context.stopOrder = mt.addOrder 
+                    instrument: instrument
+                    side: 'sell'
+                    type: 'stop'
+                    amount: curPosAmount
+                    price: currentPrice * 0.95
+                    warn "current StopLoss: #{currentPrice * 0.95}"
+            if currentPrice > context.priceRef
+                context.priceRef = currentPrice
             if (sarLong > instrument.price) #short
                 context.positionStatus = "short"
                 closePosition = true
                 break
-        when "short" 
+        when "short"
+            if instrument.price < context.priceRef && currentPosition && instrument.price < curPosPrice
+                mt.cancelOrder(context.stopOrder)
+                context.stopOrder = mt.addOrder 
+                    instrument: instrument
+                    side: 'buy'
+                    type: 'stop'
+                    amount: Math.abs(curPosAmount)
+                    price: currentPrice * 1.05
+                    warn "current StopLoss: #{currentPrice * 1.05}"
+                    warn "current Amount : #{Math.abs(curPosAmount)}"
+            if currentPrice < context.priceRef
+                context.priceRef = currentPrice
             if (sarShort < instrument.price) #long
                 context.positionStatus = "wait"
                 closePosition = true
@@ -174,6 +200,7 @@ handle: ->
         if currentPosition
             warn "Closing position"
             mt.closePosition instrument
+            mt.cancelOrder(context.stopOrder)
             marginInfo = mt.getMarginInfo instrument #update margin info after close
             context.invested = false
             debug "Invested: #{context.invested}"
@@ -193,9 +220,16 @@ handle: ->
         unless context.invested
             try 
                 # open long position
-                mt.buy instrument, 'market', (marginInfo.tradable_balance / currentPrice) * context.marginFactor,currentPrice,instrument.interval * 60   #Kaufe mit 80% des tradeable balance, abbruch nach "60(interval bei 1h) x 60 sek"
-                info "Fee: #{((((marginInfo.tradable_balance / currentPrice) * context.marginFactor ) * currentPrice) * 0.002).toFixed(2)}"
-                context.invested = true
+                if mt.buy instrument, 'limit', (marginInfo.tradable_balance / currentPrice) * context.marginFactor,currentPrice,instrument.interval * 60   #Kaufe mit 80% des tradeable balance, abbruch nach "60(interval bei 1h) x 60 sek"
+                    info "Fee: #{((((marginInfo.tradable_balance / currentPrice) * context.marginFactor ) * currentPrice) * 0.002).toFixed(2)}"
+                    context.invested = true
+                    context.stopOrder = mt.addOrder 
+                        instrument: instrument
+                        side: 'sell'
+                        type: 'stop'
+                        amount: (marginInfo.tradable_balance / currentPrice) * context.marginFactor
+                        price: currentPrice * 0.95
+                    context.priceRef = instrument.price
             catch e 
                 # the exception will be thrown if funds are not enough
                 if /insufficient funds/.exec e
@@ -208,10 +242,18 @@ handle: ->
     if context.positionStatus == "short"
         unless context.invested
             try 
+                context.currentPosAmount = (marginInfo.tradable_balance / currentPrice) * context.marginFactor
                 # open short position
-                mt.sell instrument, 'market', (marginInfo.tradable_balance / currentPrice) * context.marginFactor,currentPrice,instrument.interval * 60 
-                context.invested = true
-                sendEmail "New short position"
+                if mt.sell instrument, 'limit', context.currentPosAmount,currentPrice,instrument.interval * 60 
+                    context.invested = true
+                    sendEmail "New short position"
+                    context.stopOrder = mt.addOrder 
+                        instrument: instrument
+                        side: 'buy'
+                        type: 'stop'
+                        amount: context.currentPosAmount
+                        price: currentPrice * 1.05
+                    context.priceRef = instrument.price
             catch e 
                 # the exception will be thrown if funds are not enough
                 if /insufficient funds/.exec e
